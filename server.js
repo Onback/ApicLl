@@ -1,6 +1,10 @@
 const express = require('express');
 const axios = require('axios');
+const cors = require('cors'); // Import CORS middleware
 const app = express();
+
+// Enable CORS for all requests
+app.use(cors());
 
 // Middleware to parse JSON request body
 app.use(express.json());
@@ -8,7 +12,7 @@ app.use(express.json());
 // Utility function to add a delay (sleep)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// Route to get the download links via Streamtape APIs for all videos
+// Route to get the download links and thumbnails via Streamtape APIs for all videos
 app.get('/get-all-download-links', async (req, res) => {
     try {
         const login = '0287aca2ef38b0d9a210'; // Your Streamtape login
@@ -23,7 +27,7 @@ app.get('/get-all-download-links', async (req, res) => {
 
             const videoLinks = [];
 
-            // Loop through each file to get the download ticket and download link
+            // Loop through each file to get the download ticket, download link, and thumbnail
             for (const file of files) {
                 const fileId = file.linkid;
                 const fileName = file.name;
@@ -46,30 +50,39 @@ app.get('/get-all-download-links', async (req, res) => {
                             const downloadLink = linkResponse.data.result.url;
                             console.log(`Download Link for ${fileName}:`, downloadLink);
 
-                            // Add the video name and download link to the array
+                            // Fourth API: Get video thumbnail (thumbs)
+                            const thumbResponse = await axios.get(`https://api.streamtape.com/file/getsplash?login=${login}&key=${key}&file=${fileId}`);
+                            const videoThumb = thumbResponse.data.result;
+                            console.log(`Video Thumbs for ${fileName}:`, videoThumb);
+
+                            // Add the video name, download link, and thumbnail to the array
                             videoLinks.push({
                                 fileName: fileName,
-                                downloadLink: downloadLink
+                                downloadLink: downloadLink,
+                                videoThumb: videoThumb
                             });
                         } else {
                             console.error(`Failed to get download link for ${fileName}:`, linkResponse.data.msg);
                             videoLinks.push({
                                 fileName: fileName,
-                                downloadLink: 'Error: Could not get download link'
+                                downloadLink: 'Error: Could not get download link',
+                                videoThumb: 'Error: No thumbnail available'
                             });
                         }
                     } else {
                         console.error(`Failed to get download ticket for ${fileName}:`, ticketResponse.data.msg);
                         videoLinks.push({
                             fileName: fileName,
-                            downloadLink: 'Error: Could not get download ticket'
+                            downloadLink: 'Error: Could not get download ticket',
+                            videoThumb: 'Error: No thumbnail available'
                         });
                     }
                 } catch (error) {
                     console.error(`Error processing file ${fileName}:`, error.message);
                     videoLinks.push({
                         fileName: fileName,
-                        downloadLink: 'Error: Internal error while processing this file'
+                        downloadLink: 'Error: Internal error while processing this file',
+                        videoThumb: 'Error: No thumbnail available'
                     });
                 }
             }
@@ -90,4 +103,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
-  
