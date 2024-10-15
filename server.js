@@ -1,19 +1,86 @@
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors'); // Import CORS middleware
+const cron = require('node-cron');
+const cors = require('cors');  // Import CORS
+const request = require('request');  // For proxying video streams
 const app = express();
 
 // Enable CORS for all requests
-app.use(cors());
+app.use(cors());  // This will allow access from anywhere
 
 // Middleware to parse JSON request body
 app.use(express.json());
 
+let storedData = []; // Global variable to store the video data
+
 // Utility function to add a delay (sleep)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// Route to get the download links and thumbnails via Streamtape APIs for all videos
-app.get('/get-all-download-links', async (req, res) => {
+// Proxy Route to stream video with buffering and range support
+app.get('/proxy-download', (req, res) => {
+    const videoUrl = req.query.url; // Extract video URL from query parameter
+
+    // Check if Range is specified in the headers for video streaming
+    const range = req.headers.range;
+
+    if (range) {
+        console.log('Range request:', range);
+
+        // Prepare the options for the video stream request
+        const options = {
+            url: videoUrl,
+            headers: {
+                'User-Agent': 'Mozilla/5.0',
+                'Range': range, // Pass the range for partial content requests
+            }
+        };
+
+        // Forward the video stream to the client
+        request(options)
+            .on('response', (response) => {
+                // Setting headers for video streaming (Content-Range and Content-Type)
+                res.writeHead(response.statusCode, {
+                    'Content-Range': response.headers['content-range'],
+                    'Content-Length': response.headers['content-length'],
+                    'Content-Type': response.headers['content-type'],
+                    'Accept-Ranges': 'bytes'
+                });
+            })
+            .pipe(res) // Stream the video to the client
+            .on('error', (err) => {
+                console.error('Error streaming video:', err);
+                res.status(500).send('Error streaming video');
+            });
+    } else {
+        console.log('Full video request (no Range header)');
+
+        // If no Range header is provided, stream the entire video
+        const options = {
+            url: videoUrl,
+            headers: {
+                'User-Agent': 'Mozilla/5.0',
+            }
+        };
+
+        // Stream the full video content to the client
+        request(options)
+            .on('response', (response) => {
+                res.writeHead(response.statusCode, {
+                    'Content-Length': response.headers['content-length'],
+                    'Content-Type': response.headers['content-type'],
+                    'Accept-Ranges': 'bytes'
+                });
+            })
+            .pipe(res)
+            .on('error', (err) => {
+                console.error('Error streaming full video:', err);
+                res.status(500).send('Error streaming full video');
+            });
+    }
+});
+
+// Function to fetch video download links and thumbnails
+const fetchVideoData = async () => {
     try {
         const login = '0287aca2ef38b0d9a210'; // Your Streamtape login
         const key = 'k2ljGZWXMKirrK';         // Your Streamtape API key
@@ -87,14 +154,32 @@ app.get('/get-all-download-links', async (req, res) => {
                 }
             }
 
-            // Return the result as JSON
-            res.json({ videos: videoLinks });
+            // Store the result in memory
+            storedData = videoLinks;
+            console.log("Data fetched and stored successfully!");
+
         } else {
-            res.status(500).json({ error: 'Failed to get video list', message: videoListResponse.data.msg });
+            console.error('Failed to get video list:', videoListResponse.data.msg);
         }
     } catch (error) {
-        console.error('Error:', error.message);
-        res.status(500).json({ error: 'Internal Server Error', message: error.message });
+        console.error('Error fetching video data:', error.message);
+    }
+};
+
+// Schedule the task to run every 2 hours
+cron.schedule('0 */2 * * *', () => {
+    console.log('Fetching video data...');
+    fetchVideoData(); // Fetch the data every 2 hours
+});
+
+// Route to get the stored download links and thumbnails via Streamtape APIs
+app.get('/get-all-download-links', (req, res) => {
+    if (storedData.length > 0) {
+        // Send the stored data
+        res.json({ videos: storedData });
+    } else {
+        // If no data is stored yet, send a message indicating that the data is being fetched
+        res.status(500).json({ error: 'Data is not available yet. Please try again later.' });
     }
 });
 
@@ -102,4 +187,8 @@ app.get('/get-all-download-links', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+
+    // Fetch data once when the server starts
+    fetchVideoData();
 });
+                
